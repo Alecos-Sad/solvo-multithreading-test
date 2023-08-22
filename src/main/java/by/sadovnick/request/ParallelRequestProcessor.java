@@ -24,7 +24,6 @@ public class ParallelRequestProcessor {
     }
 
     public void processRequest(Request request) {
-
         if (request.getType() == 0) {
             try {
                 typeASemaphore.acquire();
@@ -48,6 +47,8 @@ public class ParallelRequestProcessor {
         while (!typeAQueue.isEmpty()) {
             Request request = typeAQueue.poll();
             if (request != null) {
+                // Получаем или создаем блокировщик для данного значения запроса. Если для данного значения блокировщик уже существует в valueLocks,
+                // то он будет возвращен. Если нет, то создается новый блокировщик типа ReentrantLock и добавляется в valueLocks для данного значения.
                 Lock valueLock = valueLocks.computeIfAbsent(request.getValue(), k -> new ReentrantLock());
                 valueLock.lock();
                 // Обработка запроса типа A
