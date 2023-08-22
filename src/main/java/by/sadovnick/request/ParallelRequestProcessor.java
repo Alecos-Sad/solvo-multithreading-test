@@ -1,75 +1,88 @@
 package by.sadovnick.request;
 
+import java.util.Map;
 import java.util.Queue;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public class ParallelRequestProcessor {
     private final Queue<Request> typeAQueue = new ConcurrentLinkedQueue<>();
     private final Queue<Request> typeBQueue = new ConcurrentLinkedQueue<>();
-    private final Lock typeALock = new ReentrantLock();
-    private final Lock typeBLock = new ReentrantLock();
-    private final ExecutorService executorService = Executors.newFixedThreadPool(10);
+    private final Map<Integer, Lock> valueLocks = new ConcurrentHashMap<>();
+    private final ExecutorService executorService;
+    private final Semaphore typeASemaphore;
+    private final Semaphore typeBSemaphore;
+    private final Logger logger = Logger.getLogger("ParallelRequestProcessor");
+
+    public ParallelRequestProcessor(int numThreads) {
+        executorService = Executors.newFixedThreadPool(numThreads);
+        typeASemaphore = new Semaphore(numThreads / 2);
+        typeBSemaphore = new Semaphore(numThreads / 2);
+    }
 
     public void processRequest(Request request) {
+
         if (request.getType() == 0) {
+            try {
+                typeASemaphore.acquire();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
             typeAQueue.add(request);
             executorService.submit(this::processTypeARequests);
         } else {
+            try {
+                typeBSemaphore.acquire();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
             typeBQueue.add(request);
             executorService.submit(this::processTypeBRequests);
         }
     }
 
     private void processTypeARequests() {
-        typeALock.lock();
-        try {
-            while (!typeAQueue.isEmpty()) {
-                Request request = typeAQueue.poll();
-                if (request != null) {
-                    // Обработка запроса типа A
-                    System.out.println("Processing Type A request with value: " + request.getValue());
-                }
+        while (!typeAQueue.isEmpty()) {
+            Request request = typeAQueue.poll();
+            if (request != null) {
+                Lock valueLock = valueLocks.computeIfAbsent(request.getValue(), k -> new ReentrantLock());
+                valueLock.lock();
+                // Обработка запроса типа A
+                logMessage("Processing Type A request with value: " + request.getValue() + " from Queue A" + " Queue A size: "
+                        + typeAQueue.size() + ", Queue B size: " + typeBQueue.size());
+                valueLock.unlock();
+                typeASemaphore.release();
             }
-        } finally {
-            typeALock.unlock();
         }
     }
 
     private void processTypeBRequests() {
-        typeBLock.lock();
-        try {
-            while (!typeBQueue.isEmpty()) {
-                Request request = typeBQueue.poll();
-                if (request != null) {
-                    // Обработка запроса типа B
-                    System.out.println("Processing Type B request with value: " + request.getValue());
-                }
+        while (!typeBQueue.isEmpty()) {
+            Request request = typeBQueue.poll();
+            if (request != null) {
+                Lock valueLock = valueLocks.computeIfAbsent(request.getValue(), k -> new ReentrantLock());
+                valueLock.lock();
+                // Обработка запроса типа B
+                logMessage("Processing Type B request with value: " + request.getValue() + " from Queue B" + " Queue A size: "
+                        + typeAQueue.size() + ", Queue B size: " + typeBQueue.size());
+                valueLock.unlock();
+                typeBSemaphore.release();
             }
-        } finally {
-            typeBLock.unlock();
         }
+    }
+
+    private void logMessage(String message) {
+        logger.log(Level.INFO, message);
     }
 
     public void shutdown() {
         executorService.shutdown();
     }
-
-    public static void main(String[] args) {
-        ParallelRequestProcessor processor = new ParallelRequestProcessor();
-
-        // Создаем и добавляем запросы в обработку
-        for (int i = 0; i < 10; i++) {
-            Request typeARequest = new Request(0, i);
-            Request typeBRequest = new Request(1, i);
-            processor.processRequest(typeARequest);
-            processor.processRequest(typeBRequest);
-        }
-
-        // Завершаем обработку и останавливаем потоки
-        processor.shutdown();
-    }
 }
+
+
+
+
